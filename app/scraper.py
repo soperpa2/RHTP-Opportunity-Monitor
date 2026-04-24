@@ -7,13 +7,6 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-BID_TERMS = [
-    "rfp", "rfi", "rfq", "bid", "bids",
-    "solicitation", "solicitations",
-    "procurement", "contract", "contracts",
-    "opportunity", "opportunities", "vendor"
-]
-
 HIGH_PRIORITY = [
     "rural health transformation",
     "rural health transformation program",
@@ -22,25 +15,30 @@ HIGH_PRIORITY = [
     "value-based care"
 ]
 
-KEYWORDS = [
+HEALTH_TERMS = [
     "rural health",
+    "rhtp",
+    "rural health transformation",
     "medicaid",
     "telehealth",
     "telemedicine",
     "behavioral health",
-    "community health",
-    "population health",
+    "public health",
+    "health workforce",
     "care coordination",
+    "remote patient monitoring",
     "remote patient monitoring",
     "mobile health",
     "food as medicine",
-    "health workforce",
-    "interoperability",
     "health information exchange",
+    "interoperability",
     "fqhc",
     "rural hospital",
-    "public health",
-    "data modernization"
+    "community health",
+    "population health",
+    "maternal health",
+    "substance use",
+    "opioid"
 ]
 
 EXCLUDE = [
@@ -58,24 +56,35 @@ EXCLUDE = [
     "propane",
     "travel services",
     "p-card",
-    "card program"
+    "card program",
+    "parking",
+    "elevator",
+    "plumbing",
+    "waste removal",
+    "snow removal"
 ]
 
+
+def normalize(text):
+    return (text or "").lower().strip()
+
+
+def has_health_term(text):
+    text = normalize(text)
+    return any(term in text for term in HEALTH_TERMS)
+
+
 def score_text(text):
-    text = (text or "").lower()
+    text = normalize(text)
     score = 0
 
     for phrase in HIGH_PRIORITY:
         if phrase in text:
             score += 5
 
-    for keyword in KEYWORDS:
-        if keyword in text:
+    for term in HEALTH_TERMS:
+        if term in text:
             score += 2
-
-    for bid_term in BID_TERMS:
-        if bid_term in text:
-            score += 1
 
     for bad in EXCLUDE:
         if bad in text:
@@ -112,7 +121,7 @@ def run_scraper():
                 combined_text = f"{link_text} {href}"
                 score = score_text(combined_text)
 
-                if score >= 2:
+                if score >= 6 and has_health_term(combined_text):
                     opportunity = {
                         "source_id": source["id"],
                         "state": source["state"],
