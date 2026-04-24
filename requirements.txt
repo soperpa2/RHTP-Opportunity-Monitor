@@ -1,0 +1,12 @@
+from app.scorer import score_opportunity
+
+def test_high_priority_rhtp_match():
+    result = score_opportunity("Rural Health Transformation Program support", "Medicaid care coordination and remote patient monitoring")
+    assert result.include_for_review == "yes"
+    assert result.relevance_score >= 3
+    assert "Rural Health Transformation Program" in result.matched_phrases
+
+def test_exclusion_reduces_score():
+    result = score_opportunity("Rural clinic roof replacement construction", "HVAC and roofing work")
+    assert result.include_for_review in ("no", "maybe")
+    assert result.excluded_terms

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RHTP Opportunity Monitor</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>RHTP Opportunity Monitor</h1>
+      <p>Daily procurement scanning, keyword scoring, and review pipeline for rural health transformation opportunities.</p>
+    </div>
+  </header>
+
+  <section class="cards">
+    <div class="card"><span>Sources</span><strong>{{ stats.sources }}</strong></div>
+    <div class="card"><span>Opportunities</span><strong>{{ stats.opportunities }}</strong></div>
+    <div class="card"><span>High Priority</span><strong>{{ stats.high }}</strong></div>
+    <div class="card"><span>Maybe Review</span><strong>{{ stats.maybe }}</strong></div>
+  </section>
+
+  <section class="panel">
+    <form method="get" action="/" class="filters">
+      <label>Include
+        <select name="include">
+          <option value="" {% if include == "" %}selected{% endif %}>All</option>
+          <option value="yes" {% if include == "yes" %}selected{% endif %}>Yes</option>
+          <option value="maybe" {% if include == "maybe" %}selected{% endif %}>Maybe</option>
+          <option value="no" {% if include == "no" %}selected{% endif %}>No</option>
+        </select>
+      </label>
+      <label>State
+        <select name="state">
+          <option value="">All states</option>
+          {% for s in sources %}
+          <option value="{{ s.state }}" {% if state == s.state %}selected{% endif %}>{{ s.state }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Filter</button>
+    </form>
+  </section>
+
+  <main>
+    {% for row in rows %}
+    <article class="opportunity">
+      <div class="opp-header">
+        <div>
+          <h2><a href="{{ row.url }}" target="_blank" rel="noopener">{{ row.title }}</a></h2>
+          <p class="meta">{{ row.state }} · Score {{ row.relevance_score }} · Include: {{ row.include_for_review }} · Review: {{ row.review_status }}</p>
+        </div>
+        <div class="badge">{{ row.pursue_status or "unassigned" }}</div>
+      </div>
+      <p>{{ row.description or "" }}</p>
+      <div class="tags">
+        {% for phrase in row.matched_phrases or [] %}<span>{{ phrase }}</span>{% endfor %}
+        {% for kw in row.matched_keywords or [] %}<span>{{ kw }}</span>{% endfor %}
+      </div>
+      <form method="post" action="/review/{{ row.id }}" class="review">
+        <select name="review_status">
+          {% for status in ["new","reviewed","pursue","ignore"] %}
+          <option value="{{ status }}" {% if row.review_status == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+        <select name="pursue_status">
+          <option value="">Pursue status</option>
+          {% for status in ["watch","qualify","partner","bid","no-bid"] %}
+          <option value="{{ status }}" {% if row.pursue_status == status %}selected{% endif %}>{{ status }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="notes" value="{{ row.notes or '' }}" placeholder="Notes">
+        <button type="submit">Save</button>
+      </form>
+    </article>
+    {% else %}
+    <div class="empty">No opportunities yet. Initialize the database, seed sources, then run the crawler.</div>
+    {% endfor %}
+  </main>
+</body>
+</html>
