@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from app.database import get_supabase
 
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
@@ -110,8 +111,7 @@ def update_source_status(
 ):
     payload = {
         "last_crawl_status": status,
-        "last_crawl_error": error,
-        "last_tested_at": "now()"
+        "last_crawl_error": error
     }
 
     if successful:
@@ -119,8 +119,8 @@ def update_source_status(
 
     try:
         supabase.table("sources").update(payload).eq("id", source_id).execute()
-    except Exception as e:
-        print(f"Could not update source status: {e}")
+    except Exception as status_error:
+        print(f"Could not update source status: {status_error}")
 
 
 def run_scraper():
@@ -181,7 +181,6 @@ def run_scraper():
             saved_count = 0
             skipped_count = 0
 
-            # Save the source page itself if it appears relevant
             source_page_score = score_text(page_text)
 
             if source_page_score >= 6 and has_health_term(page_text):
@@ -241,9 +240,7 @@ def run_scraper():
                 successful=True
             )
 
-            print(
-                f"Finished {state} — saved {saved_count}, skipped {skipped_count}"
-            )
+            print(f"Finished {state} — saved {saved_count}, skipped {skipped_count}")
 
         except Exception as e:
             total_errors += 1
@@ -271,5 +268,3 @@ def run_scraper():
 
 if __name__ == "__main__":
     run_scraper()
-            print(f"Error: {str(e)}")
-            print("------------\n")
