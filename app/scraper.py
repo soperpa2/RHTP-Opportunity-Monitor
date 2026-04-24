@@ -1,3 +1,4 @@
+import os
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -27,7 +28,6 @@ HEALTH_TERMS = [
     "health workforce",
     "care coordination",
     "remote patient monitoring",
-    "remote patient monitoring",
     "mobile health",
     "food as medicine",
     "health information exchange",
@@ -38,7 +38,15 @@ HEALTH_TERMS = [
     "population health",
     "maternal health",
     "substance use",
-    "opioid"
+    "opioid",
+    "grant",
+    "funding",
+    "procurement",
+    "request for proposals",
+    "rfp",
+    "rfa",
+    "notice of funding",
+    "application"
 ]
 
 EXCLUDE = [
@@ -93,39 +101,121 @@ def score_text(text):
     return score
 
 
+def update_source_status(
+    supabase,
+    source_id,
+    status,
+    error=None,
+    successful=False
+):
+    payload = {
+        "last_crawl_status": status,
+        "last_crawl_error": error,
+        "last_tested_at": "now()"
+    }
+
+    if successful:
+        payload["last_successful_crawl_at"] = "now()"
+
+    try:
+        supabase.table("sources").update(payload).eq("id", source_id).execute()
+    except Exception as e:
+        print(f"Could not update source status: {e}")
+
+
 def run_scraper():
     supabase = get_supabase()
-    sources = supabase.table("sources").select("*").execute().data
+
+    test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
+    max_sources = int(os.getenv("MAX_SOURCES", "999"))
+
+    print(f"TEST_MODE={test_mode}")
+    print(f"MAX_SOURCES={max_sources}")
+
+    sources = (
+        supabase
+        .table("sources")
+        .select("*")
+        .eq("active", True)
+        .execute()
+        .data
+    )
+
+    production_ready_sources = [
+        source for source in sources
+        if source.get("production_ready") is True
+    ]
+
+    if production_ready_sources:
+        sources = production_ready_sources
+        print(f"Using production-ready sources: {len(sources)}")
+    else:
+        print("No production-ready sources found. Falling back to all active sources.")
+
+    if test_mode:
+        sources = sources[:max_sources]
+        print(f"Test mode enabled. Limiting to {len(sources)} sources.")
+
+    total_saved = 0
+    total_errors = 0
 
     for source in sources:
-        print(f"\nCrawling {source['state']}: {source['url']}")
+        state = source.get("state")
+        url = source.get("url")
+        source_id = source.get("id")
+
+        print(f"\nCrawling {state}: {url}")
 
         try:
             response = requests.get(
-                source["url"],
+                url,
                 headers=HEADERS,
-                timeout=20
+                timeout=25
             )
             response.raise_for_status()
 
             soup = BeautifulSoup(response.text, "html.parser")
+            page_text = soup.get_text(" ", strip=True)
             links = soup.find_all("a", href=True)
 
             saved_count = 0
             skipped_count = 0
 
+            # Save the source page itself if it appears relevant
+            source_page_score = score_text(page_text)
+
+            if source_page_score >= 6 and has_health_term(page_text):
+                opportunity = {
+                    "source_id": source_id,
+                    "state": state,
+                    "agency": source.get("agency", "State Agency"),
+                    "title": source.get("page_name") or f"{state} relevant source page",
+                    "url": url,
+                    "description": page_text[:500],
+                    "raw_text": page_text[:2000]
+                }
+
+                supabase.table("raw_opportunities").upsert(
+                    opportunity,
+                    on_conflict="url"
+                ).execute()
+
+                saved_count += 1
+                total_saved += 1
+                print(f"Saved source page score={source_page_score}: {opportunity['title']}")
+
             for link in links:
                 link_text = link.get_text(" ", strip=True)
-                href = urljoin(source["url"], link["href"])
+                href = urljoin(url, link["href"])
 
                 combined_text = f"{link_text} {href}"
                 score = score_text(combined_text)
 
                 if score >= 6 and has_health_term(combined_text):
                     opportunity = {
-                        "source_id": source["id"],
-                        "state": source["state"],
-                        "agency": "State Procurement Office",
+                        "source_id": source_id,
+                        "state": state,
+                        "agency": source.get("agency", "State Agency"),
                         "title": link_text[:200] if link_text else href[:200],
                         "url": href,
                         "description": link_text[:500] if link_text else "",
@@ -138,17 +228,48 @@ def run_scraper():
                     ).execute()
 
                     saved_count += 1
-                    print(f"Saved score={score}: {opportunity['title']}")
+                    total_saved += 1
+                    print(f"Saved link score={score}: {opportunity['title']}")
                 else:
                     skipped_count += 1
 
+            update_source_status(
+                supabase,
+                source_id=source_id,
+                status="success",
+                error=None,
+                successful=True
+            )
+
             print(
-                f"Finished {source['state']} — saved {saved_count}, skipped {skipped_count}"
+                f"Finished {state} — saved {saved_count}, skipped {skipped_count}"
             )
 
         except Exception as e:
+            total_errors += 1
+            error_message = str(e)
+
+            update_source_status(
+                supabase,
+                source_id=source_id,
+                status="error",
+                error=error_message,
+                successful=False
+            )
+
             print("\n--- ERROR ---")
-            print(f"State: {source.get('state')}")
-            print(f"URL: {source.get('url')}")
+            print(f"State: {state}")
+            print(f"URL: {url}")
+            print(f"Error: {error_message}")
+            print("------------\n")
+
+    print("\nSCRAPER RUN COMPLETE")
+    print(f"Sources attempted: {len(sources)}")
+    print(f"Total opportunities saved: {total_saved}")
+    print(f"Total source errors: {total_errors}")
+
+
+if __name__ == "__main__":
+    run_scraper()
             print(f"Error: {str(e)}")
             print("------------\n")
