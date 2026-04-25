@@ -111,7 +111,12 @@ def has_any(text, terms):
 
 def is_email_or_phone_link(url):
     url = normalize(url)
-    return url.startswith("mailto:") or url.startswith("tel:") or "mailto:" in url or "tel:" in url
+    return (
+        url.startswith("mailto:")
+        or url.startswith("tel:")
+        or "mailto:" in url
+        or "tel:" in url
+    )
 
 
 def is_excluded(text):
@@ -210,6 +215,23 @@ def save_opportunity(
     description,
     raw_text
 ):
+    existing = (
+        supabase
+        .table("raw_opportunities")
+        .select("id")
+        .eq("url", url)
+        .execute()
+        .data
+    )
+
+    if existing:
+        supabase.table("raw_opportunities").update({
+            "last_seen_at": "now()"
+        }).eq("url", url).execute()
+
+        print(f"Already known, updated last_seen_at: {url}")
+        return False
+
     opportunity = {
         "source_id": source.get("id"),
         "state": source.get("state"),
@@ -217,15 +239,17 @@ def save_opportunity(
         "title": title[:200] if title else url[:200],
         "url": url,
         "description": description[:500] if description else "",
-        "raw_text": raw_text[:2000] if raw_text else ""
+        "raw_text": raw_text[:2000] if raw_text else "",
+        "review_status": "new",
+        "follow_up": False,
+        "archived": False,
+        "not_relevant": False
     }
 
-    supabase.table("raw_opportunities").upsert(
-        opportunity,
-        on_conflict="url"
-    ).execute()
+    supabase.table("raw_opportunities").insert(opportunity).execute()
 
-    print(f"Saved direct RHTP opportunity: {opportunity['title']}")
+    print(f"Saved NEW direct RHTP opportunity: {opportunity['title']}")
+    return True
 
 
 def update_source_status(
@@ -275,7 +299,8 @@ def run_scraper():
         sources = sources[:max_sources]
         print(f"Test mode enabled. Limiting to {len(sources)} sources.")
 
-    total_saved = 0
+    total_new_saved = 0
+    total_known_seen = 0
     total_errors = 0
     visited_urls = set()
 
@@ -293,11 +318,12 @@ def run_scraper():
             page_text, links = extract_page_text_and_links(url, html)
 
             saved_count = 0
+            known_count = 0
             followed_count = 0
             skipped_count = 0
 
             if is_direct_rhtp_opportunity(page_text, url) and is_live_url(url):
-                save_opportunity(
+                was_new = save_opportunity(
                     supabase=supabase,
                     source=source,
                     url=url,
@@ -305,8 +331,13 @@ def run_scraper():
                     description=page_text,
                     raw_text=page_text
                 )
-                saved_count += 1
-                total_saved += 1
+
+                if was_new:
+                    saved_count += 1
+                    total_new_saved += 1
+                else:
+                    known_count += 1
+                    total_known_seen += 1
 
             candidate_links = []
 
@@ -316,7 +347,7 @@ def run_scraper():
                 combined_text = f"{link_text} {href}"
 
                 if is_direct_rhtp_opportunity(combined_text, href) and is_live_url(href):
-                    save_opportunity(
+                    was_new = save_opportunity(
                         supabase=supabase,
                         source=source,
                         url=href,
@@ -324,8 +355,13 @@ def run_scraper():
                         description=link_text,
                         raw_text=combined_text
                     )
-                    saved_count += 1
-                    total_saved += 1
+
+                    if was_new:
+                        saved_count += 1
+                        total_new_saved += 1
+                    else:
+                        known_count += 1
+                        total_known_seen += 1
 
                 if should_follow_link(link_text, href):
                     candidate_links.append(link)
@@ -350,7 +386,7 @@ def run_scraper():
                     )
 
                     if is_direct_rhtp_opportunity(child_text, follow_url) and is_live_url(follow_url):
-                        save_opportunity(
+                        was_new = save_opportunity(
                             supabase=supabase,
                             source=source,
                             url=follow_url,
@@ -358,8 +394,13 @@ def run_scraper():
                             description=child_text,
                             raw_text=child_text
                         )
-                        saved_count += 1
-                        total_saved += 1
+
+                        if was_new:
+                            saved_count += 1
+                            total_new_saved += 1
+                        else:
+                            known_count += 1
+                            total_known_seen += 1
 
                     for child_link in child_links:
                         child_link_text = child_link["text"]
@@ -367,7 +408,7 @@ def run_scraper():
                         child_combined = f"{child_link_text} {child_href}"
 
                         if is_direct_rhtp_opportunity(child_combined, child_href) and is_live_url(child_href):
-                            save_opportunity(
+                            was_new = save_opportunity(
                                 supabase=supabase,
                                 source=source,
                                 url=child_href,
@@ -375,8 +416,13 @@ def run_scraper():
                                 description=child_link_text,
                                 raw_text=child_combined
                             )
-                            saved_count += 1
-                            total_saved += 1
+
+                            if was_new:
+                                saved_count += 1
+                                total_new_saved += 1
+                            else:
+                                known_count += 1
+                                total_known_seen += 1
 
                 except Exception as child_error:
                     print(f"Follow-link error: {follow_url} | {child_error}")
@@ -390,8 +436,8 @@ def run_scraper():
             )
 
             print(
-                f"Finished {state} — saved {saved_count}, "
-                f"followed {followed_count}, skipped {skipped_count}"
+                f"Finished {state} — new saved {saved_count}, "
+                f"known seen {known_count}, followed {followed_count}, skipped {skipped_count}"
             )
 
         except Exception as e:
@@ -414,7 +460,8 @@ def run_scraper():
 
     print("\nSCRAPER RUN COMPLETE")
     print(f"Sources attempted: {len(sources)}")
-    print(f"Total opportunities saved: {total_saved}")
+    print(f"New opportunities saved: {total_new_saved}")
+    print(f"Known opportunities seen again: {total_known_seen}")
     print(f"Total source errors: {total_errors}")
 
 
